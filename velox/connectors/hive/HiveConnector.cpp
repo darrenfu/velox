@@ -172,7 +172,7 @@ HiveDataSource::HiveDataSource(
     FileHandleFactory* fileHandleFactory,
     velox::memory::MemoryPool* pool,
     ExpressionEvaluator* expressionEvaluator,
-    memory::MappedMemory* mappedMemory,
+    memory::MemoryAllocator* allocator,
     const std::string& scanId,
     folly::Executor* executor)
     : outputType_(outputType),
@@ -180,7 +180,7 @@ HiveDataSource::HiveDataSource(
       pool_(pool),
       readerOpts_(pool),
       expressionEvaluator_(expressionEvaluator),
-      mappedMemory_(mappedMemory),
+      allocator_(allocator),
       scanId_(scanId),
       executor_(executor) {
   // Column handled keyed on the column alias, the name used in the query.
@@ -300,7 +300,7 @@ class InputStreamHolder : public dwio::common::AbstractInputStreamHolder {
       std::shared_ptr<dwio::common::IoStatistics> stats)
       : fileHandle_(std::move(fileHandle)), stats_(std::move(stats)) {
     input_ = std::make_unique<dwio::common::ReadFileInputStream>(
-        fileHandle_->file.get(), dwio::common::MetricsLog::voidLog(), nullptr);
+        fileHandle_->file, dwio::common::MetricsLog::voidLog(), nullptr);
   }
 
   dwio::common::InputStream& get() override {
@@ -362,7 +362,7 @@ void HiveDataSource::addSplit(std::shared_ptr<ConnectorSplit> split) {
 
   fileHandle_ = fileHandleFactory_->generate(split_->filePath);
   // For DataCache and no cache, the stream keeps track of IO.
-  auto asyncCache = dynamic_cast<cache::AsyncDataCache*>(mappedMemory_);
+  auto asyncCache = dynamic_cast<cache::AsyncDataCache*>(allocator_);
   // Decide between AsyncDataCache, legacy DataCache and no cache. All
   // three are supported to enable comparison.
   if (asyncCache) {
@@ -396,7 +396,7 @@ void HiveDataSource::addSplit(std::shared_ptr<ConnectorSplit> split) {
   reader_ = dwio::common::getReaderFactory(readerOpts_.getFileFormat())
                 ->createReader(
                     std::make_unique<dwio::common::ReadFileInputStream>(
-                        fileHandle_->file.get(),
+                        fileHandle_->file,
                         dwio::common::MetricsLog::voidLog(),
                         asyncCache ? nullptr : ioStats_.get()),
                     readerOpts_);

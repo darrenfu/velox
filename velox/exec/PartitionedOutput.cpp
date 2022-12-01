@@ -63,7 +63,7 @@ void Destination::serialize(
     vector_size_t begin,
     vector_size_t end) {
   if (!current_) {
-    current_ = std::make_unique<VectorStreamGroup>(memory_);
+    current_ = std::make_unique<VectorStreamGroup>(allocator_);
     auto rowType = std::dynamic_pointer_cast<const RowType>(output->type());
     vector_size_t numRows = 0;
     for (vector_size_t i = begin; i < end; i++) {
@@ -84,7 +84,7 @@ BlockingReason Destination::flush(
   constexpr int32_t kMinMessageSize = 128;
   auto listener = bufferManager.newListener();
   IOBufOutputStream stream(
-      *current_->mappedMemory(),
+      *current_->allocator(),
       listener.get(),
       std::max<int64_t>(kMinMessageSize, current_->size()));
   current_->flush(&stream);
@@ -97,6 +97,38 @@ BlockingReason Destination::flush(
       destination_,
       std::make_unique<SerializedPage>(stream.getIOBuf()),
       future);
+}
+
+PartitionedOutput::PartitionedOutput(
+    int32_t operatorId,
+    DriverCtx* FOLLY_NONNULL ctx,
+    const std::shared_ptr<const core::PartitionedOutputNode>& planNode)
+    : Operator(
+          ctx,
+          planNode->outputType(),
+          operatorId,
+          planNode->id(),
+          "PartitionedOutput"),
+      keyChannels_(toChannels(planNode->inputType(), planNode->keys())),
+      numDestinations_(planNode->numPartitions()),
+      replicateNullsAndAny_(planNode->isReplicateNullsAndAny()),
+      partitionFunction_(
+          numDestinations_ == 1
+              ? nullptr
+              : planNode->partitionFunctionFactory()(numDestinations_)),
+      outputChannels_(calculateOutputChannels(
+          planNode->inputType(),
+          planNode->outputType(),
+          planNode->outputType())),
+      bufferManager_(PartitionedOutputBufferManager::getInstance()),
+      maxBufferedBytes_(ctx->task->queryCtx()
+                            ->queryConfig()
+                            .maxPartitionedOutputBufferSize()),
+      allocator_{operatorCtx_->allocator()} {
+  if (numDestinations_ == 1 || planNode->isBroadcast()) {
+    VELOX_CHECK(keyChannels_.empty());
+    VELOX_CHECK_NULL(partitionFunction_);
+  }
 }
 
 void PartitionedOutput::initializeInput(RowVectorPtr input) {
@@ -125,7 +157,7 @@ void PartitionedOutput::initializeDestinations() {
     auto taskId = operatorCtx_->taskId();
     for (int i = 0; i < numDestinations_; ++i) {
       destinations_.push_back(
-          std::make_unique<Destination>(taskId, i, mappedMemory_));
+          std::make_unique<Destination>(taskId, i, allocator_));
     }
   }
 }

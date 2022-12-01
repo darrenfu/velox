@@ -27,8 +27,8 @@ class Destination {
   Destination(
       const std::string& taskId,
       int destination,
-      memory::MappedMemory* FOLLY_NONNULL memory)
-      : taskId_(taskId), destination_(destination), memory_(memory) {
+      memory::MemoryAllocator* FOLLY_NONNULL allocator)
+      : taskId_(taskId), destination_(destination), allocator_(allocator) {
     setTargetSizePct();
   }
 
@@ -89,7 +89,7 @@ class Destination {
 
   const std::string taskId_;
   const int destination_;
-  memory::MappedMemory* FOLLY_NONNULL const memory_;
+  memory::MemoryAllocator* FOLLY_NONNULL const allocator_;
   uint64_t bytesInCurrent_{0};
   std::vector<IndexRange> rows_;
 
@@ -129,33 +129,7 @@ class PartitionedOutput : public Operator {
   PartitionedOutput(
       int32_t operatorId,
       DriverCtx* FOLLY_NONNULL ctx,
-      const std::shared_ptr<const core::PartitionedOutputNode>& planNode)
-      : Operator(
-            ctx,
-            planNode->outputType(),
-            operatorId,
-            planNode->id(),
-            "PartitionedOutput"),
-        keyChannels_(toChannels(planNode->inputType(), planNode->keys())),
-        numDestinations_(planNode->numPartitions()),
-        replicateNullsAndAny_(planNode->isReplicateNullsAndAny()),
-        partitionFunction_(
-            numDestinations_ == 1
-                ? nullptr
-                : planNode->partitionFunctionFactory()(numDestinations_)),
-        outputChannels_(calculateOutputChannels(
-            planNode->inputType(),
-            planNode->outputType(),
-            planNode->outputType())),
-        bufferManager_(PartitionedOutputBufferManager::getInstance()),
-        maxBufferedBytes_(
-            ctx->task->queryCtx()->config().maxPartitionedOutputBufferSize()),
-        mappedMemory_{operatorCtx_->mappedMemory()} {
-    if (numDestinations_ == 1 || planNode->isBroadcast()) {
-      VELOX_CHECK(keyChannels_.empty());
-      VELOX_CHECK_NULL(partitionFunction_);
-    }
-  }
+      const std::shared_ptr<const core::PartitionedOutputNode>& planNode);
 
   void addInput(RowVectorPtr input) override;
 
@@ -216,7 +190,7 @@ class PartitionedOutput : public Operator {
   bool replicatedAny_{false};
   std::weak_ptr<exec::PartitionedOutputBufferManager> bufferManager_;
   const int64_t maxBufferedBytes_;
-  memory::MappedMemory* FOLLY_NONNULL mappedMemory_;
+  memory::MemoryAllocator* FOLLY_NONNULL allocator_;
   RowVectorPtr output_;
 
   // Reusable memory.
