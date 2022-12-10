@@ -56,12 +56,18 @@ inline void registerArrayHasDuplicatesFunctions() {
       ParameterBinder<ArrayHasDuplicatesFunction, T>,
       bool,
       Array<T>>({"array_has_duplicates"});
+      
+template <typename T>
+inline void registerArrayDuplicatesFunctions() {
+  registerFunction<
+      ParameterBinder<ArrayDuplicatesFunction, T>,
+      Array<T>,
+      Array<T>>({"array_duplicates"});
 }
 
 void registerArrayFunctions() {
   VELOX_REGISTER_VECTOR_FUNCTION(udf_array_constructor, "array_constructor");
   VELOX_REGISTER_VECTOR_FUNCTION(udf_array_distinct, "array_distinct");
-  VELOX_REGISTER_VECTOR_FUNCTION(udf_array_duplicates, "array_duplicates");
   VELOX_REGISTER_VECTOR_FUNCTION(udf_array_intersect, "array_intersect");
   VELOX_REGISTER_VECTOR_FUNCTION(udf_array_contains, "contains");
   VELOX_REGISTER_VECTOR_FUNCTION(udf_array_except, "array_except");
@@ -114,5 +120,8 @@ void registerArrayFunctions() {
   registerArrayHasDuplicatesFunctions<int32_t>();
   registerArrayHasDuplicatesFunctions<int64_t>();
   registerArrayHasDuplicatesFunctions<Varchar>();
+
+  registerArrayDuplicatesFunctions<int64_t>();
+  registerArrayDuplicatesFunctions<Varchar>();
 }
 }; // namespace facebook::velox::functions
