@@ -1201,6 +1201,55 @@ TEST_F(StringFunctionsTest, sha512) {
   EXPECT_EQ(std::nullopt, sha512(std::nullopt));
 }
 
+TEST_F(StringFunctionsTest, HmacSha256) {
+  const auto hmacSha256 = [&](std::optional<std::string> arg,
+                              std::optional<std::string> key) {
+    return evaluateOnce<std::string, std::string>(
+        "hmac_sha256(c0, c1)", {arg, key}, {VARBINARY(), VARBINARY()});
+  };
+  // Use python hmac lib results as the expected value.
+  // >>> import hmac
+  // >>> def sha256(data, key):
+  //         print(hmac.new(key, data, digestmod='sha256').hexdigest())
+  // >>> sha256(b"hashme", b"velox")
+  // 24bb7fa25fd592ef6a4c939d4fb91b7f7f04f8813260961101117ec30f865794
+  // >>> sha256(b"Infinity", b"velox")
+  // f45718c9586ae7d761194485d15cbf6284b5b606ade4f9d5820fbdd1eaf52b75
+  // >>> sha256(b"", b"velox")
+  // fd8658b6a6b6601155fecf9a39b6f95cf030863e550073423a8e250a35c6f5a4
+  EXPECT_EQ(
+      hexToDec(
+          "24bb7fa25fd592ef6a4c939d4fb91b7f7f04f8813260961101117ec30f865794"),
+      hmacSha256("hashme", "velox"));
+  EXPECT_EQ(
+      hexToDec(
+          "f45718c9586ae7d761194485d15cbf6284b5b606ade4f9d5820fbdd1eaf52b75"),
+      hmacSha256("Infinity", "velox"));
+  EXPECT_EQ(
+      hexToDec(
+          "fd8658b6a6b6601155fecf9a39b6f95cf030863e550073423a8e250a35c6f5a4"),
+      hmacSha256("", "velox"));
+  EXPECT_EQ(std::nullopt, hmacSha256(std::nullopt, "velox"));
+}
+
+TEST_F(StringFunctionsTest, HmacSha512) {
+  const auto hmacSha512 = [&](std::optional<std::string> arg,
+                              std::optional<std::string> key) {
+    return evaluateOnce<std::string, std::string>(
+        "hmac_sha512(c0, c1)", {arg, key}, {VARBINARY(), VARBINARY()});
+  };
+  // Use the same expected value from TestVarbinaryFunctions of presto java
+  EXPECT_EQ(
+      hexToDec(
+          "84FA5AA0279BBC473267D05A53EA03310A987CECC4C1535FF29B6D76B8F1444A728DF3AADB89D4A9A6709E1998F373566E8F824A8CA93B1821F0B69BC2A2F65E"),
+      hmacSha512("", "key"));
+  EXPECT_EQ(
+      hexToDec(
+          "FEFA712B67DED871E1ED987F8B20D6A69EB9FCC87974218B9A1A6D5202B54C18ECDA4839A979DED22F07E0881CF40B762691992D120408F49D6212E112509D72"),
+      hmacSha512("hashme", "key"));
+  EXPECT_EQ(std::nullopt, hmacSha512(std::nullopt, "velox"));
+}
+
 void StringFunctionsTest::testReplaceInPlace(
     const std::vector<std::pair<std::string, std::string>>& tests,
     const std::string& search,

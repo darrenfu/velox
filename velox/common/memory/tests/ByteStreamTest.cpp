@@ -27,10 +27,14 @@ class ByteStreamTest : public testing::TestWithParam<bool> {
  protected:
   void SetUp() override {
     constexpr uint64_t kMaxMappedMemory = 64 << 20;
-    MmapAllocatorOptions options;
-    options.capacity = kMaxMappedMemory;
-    mmapAllocator_ = std::make_shared<MmapAllocator>(options);
+    MmapAllocatorOptions allocatorOptions;
+    allocatorOptions.capacity = kMaxMappedMemory;
+    mmapAllocator_ = std::make_shared<MmapAllocator>(allocatorOptions);
     MemoryAllocator::setDefaultInstance(mmapAllocator_.get());
+    IMemoryManager::Options mgrOptions;
+    mgrOptions.capacity = kMaxMemory;
+    memoryManager_ = std::make_unique<MemoryManager>(mgrOptions);
+    pool_ = memoryManager_->getChild();
   }
 
   void TearDown() override {
@@ -39,11 +43,12 @@ class ByteStreamTest : public testing::TestWithParam<bool> {
   }
 
   std::shared_ptr<MmapAllocator> mmapAllocator_;
+  std::unique_ptr<MemoryManager> memoryManager_;
+  std::shared_ptr<memory::MemoryPool> pool_;
 };
 
 TEST_F(ByteStreamTest, outputStream) {
-  auto out =
-      std::make_unique<IOBufOutputStream>(*mmapAllocator_, nullptr, 10000);
+  auto out = std::make_unique<IOBufOutputStream>(*pool_, nullptr, 10000);
   std::stringstream referenceSStream;
   auto reference = std::make_unique<OStreamOutputStream>(&referenceSStream);
   for (auto i = 0; i < 100; ++i) {

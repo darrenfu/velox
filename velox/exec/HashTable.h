@@ -62,7 +62,12 @@ class BaseHashTable {
 
   // 2M entries, i.e. 16MB is the largest array based hash table.
   static constexpr uint64_t kArrayHashMaxSize = 2L << 20;
+
+  /// Specifies the hash mode of a table.
   enum class HashMode { kHash, kArray, kNormalizedKey };
+
+  /// Returns the string of the given 'mode'.
+  static std::string modeString(HashMode mode);
 
   // Keeps track of results returned from a join table. One batch of
   // keys can produce multiple batches of results. This is initialized
@@ -260,9 +265,17 @@ class BaseHashTable {
 
  protected:
   virtual void setHashMode(HashMode mode, int32_t numNew) = 0;
+
   std::vector<std::unique_ptr<VectorHasher>> hashers_;
   std::unique_ptr<RowContainer> rows_;
 };
+
+FOLLY_ALWAYS_INLINE std::ostream& operator<<(
+    std::ostream& os,
+    const BaseHashTable::HashMode& mode) {
+  os << BaseHashTable::modeString(mode);
+  return os;
+}
 
 class ProbeState;
 
@@ -283,12 +296,12 @@ class HashTable : public BaseHashTable {
       bool allowDuplicates,
       bool isJoinBuild,
       bool hasProbedFlag,
-      memory::MemoryAllocator* FOLLY_NULLABLE memory);
+      memory::MemoryPool* FOLLY_NULLABLE pool);
 
   static std::unique_ptr<HashTable> createForAggregation(
       std::vector<std::unique_ptr<VectorHasher>>&& hashers,
       const std::vector<std::unique_ptr<Aggregate>>& aggregates,
-      memory::MemoryAllocator* FOLLY_NULLABLE memory) {
+      memory::MemoryPool* FOLLY_NULLABLE pool) {
     return std::make_unique<HashTable>(
         std::move(hashers),
         aggregates,
@@ -296,7 +309,7 @@ class HashTable : public BaseHashTable {
         false, // allowDuplicates
         false, // isJoinBuild
         false, // hasProbedFlag
-        memory);
+        pool);
   }
 
   static std::unique_ptr<HashTable> createForJoin(
@@ -304,7 +317,7 @@ class HashTable : public BaseHashTable {
       const std::vector<TypePtr>& dependentTypes,
       bool allowDuplicates,
       bool hasProbedFlag,
-      memory::MemoryAllocator* FOLLY_NULLABLE memory) {
+      memory::MemoryPool* FOLLY_NULLABLE pool) {
     static const std::vector<std::unique_ptr<Aggregate>> kNoAggregates;
     return std::make_unique<HashTable>(
         std::move(hashers),
@@ -313,7 +326,7 @@ class HashTable : public BaseHashTable {
         allowDuplicates,
         true, // isJoinBuild
         hasProbedFlag,
-        memory);
+        pool);
   }
 
   virtual ~HashTable() override = default;
@@ -398,10 +411,19 @@ class HashTable : public BaseHashTable {
   }
 
   uint64_t rehashSize() const {
-    return rehashSize(size_);
+    return rehashSize(size_ - numTombstones_);
   }
 
   std::string toString() override;
+
+  /// Invoked to check the consistency of the internal state. The function scans
+  /// all the table slots to check if the relevant slot counting are correct
+  /// such as the number of used slots ('numDistinct_') and the number of
+  /// tombstone slots ('numTombstones_').
+  ///
+  /// NOTE: the check cost is non-trivial and is mostly intended for testing
+  /// purpose.
+  void checkConsistency() const;
 
  private:
   // Returns the number of entries after which the table gets rehashed.
@@ -608,6 +630,8 @@ class HashTable : public BaseHashTable {
   int64_t size_ = 0;
   int64_t sizeMask_ = 0;
   int64_t numDistinct_ = 0;
+  // Counts the number of tombstone table slots.
+  int64_t numTombstones_ = 0;
   HashMode hashMode_ = HashMode::kArray;
   // Owns the memory of multiple build side hash join tables that are
   // combined into a single probe hash table.

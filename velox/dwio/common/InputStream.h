@@ -185,12 +185,6 @@ class FileInputStream : public InputStream {
 // An input stream that reads from an already opened ReadFile.
 class ReadFileInputStream final : public InputStream {
  public:
-  // Does not take ownership of |readFile|.
-  explicit ReadFileInputStream(
-      velox::ReadFile* FOLLY_NONNULL readFile,
-      const MetricsLogPtr& metricsLog = MetricsLog::voidLog(),
-      IoStatistics* FOLLY_NULLABLE stats = nullptr);
-
   // Take shared ownership of |readFile|.
   explicit ReadFileInputStream(
       std::shared_ptr<velox::ReadFile>,
@@ -204,8 +198,7 @@ class ReadFileInputStream final : public InputStream {
   }
 
   uint64_t getNaturalReadSize() const final {
-    // TODO: configure this accurately if it actually has impact.
-    return 10ULL << 20;
+    return readFile_->getNaturalReadSize();
   }
 
   void read(void* FOLLY_NONNULL, uint64_t, uint64_t, LogType) override;
@@ -223,12 +216,11 @@ class ReadFileInputStream final : public InputStream {
   bool hasReadAsync() const override;
 
   const std::shared_ptr<velox::ReadFile>& getReadFile() const {
-    return readFileOwned_;
+    return readFile_;
   }
 
  private:
-  velox::ReadFile* FOLLY_NONNULL readFile_;
-  std::shared_ptr<velox::ReadFile> readFileOwned_;
+  std::shared_ptr<velox::ReadFile> readFile_;
 };
 
 class ReferenceableInputStream : public InputStream {
