@@ -78,7 +78,7 @@ class HashTableTest : public testing::TestWithParam<bool> {
             buildType->childAt(channel), channel));
       }
       auto table = HashTable<true>::createForJoin(
-          std::move(keyHashers), dependentTypes, true, false, pool_.get());
+          std::move(keyHashers), dependentTypes, true, false, mappedMemory_);
 
       makeRows(size, 1, sequence, buildType, batches);
       copyVectorsToTable(batches, startOffset, table.get());
@@ -153,7 +153,7 @@ class HashTableTest : public testing::TestWithParam<bool> {
     }
     static std::vector<std::unique_ptr<Aggregate>> empty;
     return HashTable<false>::createForAggregation(
-        std::move(keyHashers), empty, pool_.get());
+        std::move(keyHashers), empty, mappedMemory_);
   }
 
   void insertGroups(
@@ -436,6 +436,7 @@ class HashTableTest : public testing::TestWithParam<bool> {
   }
 
   std::shared_ptr<memory::MemoryPool> pool_{memory::getDefaultMemoryPool()};
+  memory::MappedMemory* mappedMemory_{memory::MappedMemory::getInstance()};
   std::unique_ptr<test::VectorMaker> vectorMaker_{
       std::make_unique<test::VectorMaker>(pool_.get())};
   // Bitmap of positions in batches_ that end up in the table.
@@ -517,7 +518,7 @@ TEST_P(HashTableTest, clear) {
       std::vector<TypePtr>{BIGINT()},
       BIGINT()));
   auto table = HashTable<true>::createForAggregation(
-      std::move(keyHashers), aggregates, pool_.get());
+      std::move(keyHashers), aggregates, mappedMemory_);
   table->clear();
 }
 
@@ -596,7 +597,7 @@ TEST_P(HashTableTest, regularHashingTableSize) {
           std::make_unique<VectorHasher>(type->childAt(channel), channel));
     }
     auto table = HashTable<true>::createForJoin(
-        std::move(keyHashers), {}, true, false, pool_.get());
+        std::move(keyHashers), {}, true, false, mappedMemory_);
     std::vector<RowVectorPtr> batches;
     makeRows(1 << 12, 1, 0, type, batches);
     copyVectorsToTable(batches, 0, table.get());
@@ -617,6 +618,36 @@ TEST_P(HashTableTest, regularHashingTableSize) {
 TEST_P(HashTableTest, groupBySpill) {
   auto type = ROW({"k1"}, {BIGINT()});
   testGroupBySpill(5'000'000, type, 1, 1000, 1000);
+}
+
+TEST_P(HashTableTest, checkSizeValidation) {
+  auto rowType = ROW({"a"}, {BIGINT()});
+  auto table = createHashTableForAggregation(rowType, 1);
+  auto lookup = std::make_unique<HashLookup>(table->hashers());
+
+  // The initial set hash mode with table size of 256K entries.
+  table->testingSetHashMode(BaseHashTable::HashMode::kHash, 131'072);
+  ASSERT_EQ(table->capacity(), 256 << 10);
+
+  auto vector1 = vectorMaker_->rowVector({vectorMaker_->flatVector<int64_t>(
+      131'072, [&](auto row) { return row; })});
+  // The first insertion of 128KB distinct entries.
+  insertGroups(*vector1, *lookup, *table);
+  ASSERT_EQ(table->capacity(), 256 << 10);
+
+  auto vector2 = vectorMaker_->rowVector({vectorMaker_->flatVector<int64_t>(
+      131'072, [&](auto row) { return 131'072 + row; })});
+  // The second insertion of 128KB distinct entries triggers the table resizing.
+  // And we expect the table size bumps up to 512KB.
+  insertGroups(*vector2, *lookup, *table);
+  ASSERT_EQ(table->capacity(), 512 << 10);
+
+  auto vector3 = vectorMaker_->rowVector(
+      {vectorMaker_->flatVector<int64_t>(1, [&](auto row) { return row; })});
+  // The last insertion triggers the check size which see the table size matches
+  // the number of distinct entries that it stores.
+  insertGroups(*vector3, *lookup, *table);
+  ASSERT_EQ(table->capacity(), 512 << 10);
 }
 
 VELOX_INSTANTIATE_TEST_SUITE_P(

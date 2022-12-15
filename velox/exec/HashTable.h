@@ -15,7 +15,7 @@
  */
 #pragma once
 
-#include "velox/common/memory/MemoryAllocator.h"
+#include "velox/common/memory/MappedMemory.h"
 #include "velox/exec/Aggregate.h"
 #include "velox/exec/Operator.h"
 #include "velox/exec/RowContainer.h"
@@ -168,12 +168,16 @@ class BaseHashTable {
   /// be used for flushing a partial group by, for example.
   virtual void clear() = 0;
 
+  /// Returns the capacity of the internal hash table which is number of rows
+  /// it can stores in a group by or hash join build.
+  virtual uint64_t capacity() const = 0;
+
   /// Returns the number of rows in a group by or hash join build
   /// side. This is used for sizing the internal hash table.
   virtual uint64_t numDistinct() const = 0;
 
-  // Returns table growth in bytes after adding 'numNewDistinct' distinct
-  // entries. This only concerns the hash table, not the payload rows.
+  /// Returns table growth in bytes after adding 'numNewDistinct' distinct
+  /// entries. This only concerns the hash table, not the payload rows.
   virtual uint64_t hashTableSizeIncrease(int32_t numNewDistinct) const = 0;
 
   /// Returns true if the hash table contains rows with duplicate keys.
@@ -296,12 +300,12 @@ class HashTable : public BaseHashTable {
       bool allowDuplicates,
       bool isJoinBuild,
       bool hasProbedFlag,
-      memory::MemoryPool* FOLLY_NULLABLE pool);
+      memory::MappedMemory* FOLLY_NULLABLE memory);
 
   static std::unique_ptr<HashTable> createForAggregation(
       std::vector<std::unique_ptr<VectorHasher>>&& hashers,
       const std::vector<std::unique_ptr<Aggregate>>& aggregates,
-      memory::MemoryPool* FOLLY_NULLABLE pool) {
+      memory::MappedMemory* FOLLY_NULLABLE memory) {
     return std::make_unique<HashTable>(
         std::move(hashers),
         aggregates,
@@ -309,7 +313,7 @@ class HashTable : public BaseHashTable {
         false, // allowDuplicates
         false, // isJoinBuild
         false, // hasProbedFlag
-        pool);
+        memory);
   }
 
   static std::unique_ptr<HashTable> createForJoin(
@@ -317,7 +321,7 @@ class HashTable : public BaseHashTable {
       const std::vector<TypePtr>& dependentTypes,
       bool allowDuplicates,
       bool hasProbedFlag,
-      memory::MemoryPool* FOLLY_NULLABLE pool) {
+      memory::MappedMemory* FOLLY_NULLABLE memory) {
     static const std::vector<std::unique_ptr<Aggregate>> kNoAggregates;
     return std::make_unique<HashTable>(
         std::move(hashers),
@@ -326,7 +330,7 @@ class HashTable : public BaseHashTable {
         allowDuplicates,
         true, // isJoinBuild
         hasProbedFlag,
-        pool);
+        memory);
   }
 
   virtual ~HashTable() override = default;
@@ -369,6 +373,10 @@ class HashTable : public BaseHashTable {
 
   HashStringAllocator* FOLLY_NULLABLE stringAllocator() override {
     return &rows_->stringAllocator();
+  }
+
+  uint64_t capacity() const override {
+    return size_;
   }
 
   uint64_t numDistinct() const override {
@@ -424,6 +432,10 @@ class HashTable : public BaseHashTable {
   /// NOTE: the check cost is non-trivial and is mostly intended for testing
   /// purpose.
   void checkConsistency() const;
+
+  void testingSetHashMode(HashMode mode, int32_t numNew) {
+    setHashMode(mode, numNew);
+  }
 
  private:
   // Returns the number of entries after which the table gets rehashed.
@@ -626,7 +638,7 @@ class HashTable : public BaseHashTable {
   int32_t nextOffset_;
   uint8_t* FOLLY_NULLABLE tags_ = nullptr;
   char* FOLLY_NULLABLE* FOLLY_NULLABLE table_ = nullptr;
-  memory::MemoryAllocator::ContiguousAllocation tableAllocation_;
+  memory::MappedMemory::ContiguousAllocation tableAllocation_;
   int64_t size_ = 0;
   int64_t sizeMask_ = 0;
   int64_t numDistinct_ = 0;
